@@ -3,10 +3,14 @@
 curl https://close-to-git-main-tdtshs-projects.vercel.app/api/health
 curl https://close-to-tdtshs-projects.vercel.app/api/health
 
+## API一覧
+
+- 1) Line -> Vercel 上の webhook#1(質問) (/api/line/webhook)
+
 
 ## Neon
 
-Neonの該当プロジェクトのSQL Editorに下記を貼り付けて [Run]をクリック
+- Neonの該当プロジェクトのSQL Editorに下記を貼り付けて [Run]をクリック
 
 
 ```
@@ -24,7 +28,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS line_events_event_id_uq
 ON line_events(event_id);
 ```
 
-Tablesに line_events があることを確認
+- Tablesに line_events があることを確認
 
 
 
@@ -73,16 +77,19 @@ Vercel Dashboard - Project - Settings - Environment Variables
 
 追加したら Redeploy
 
-## Line用 webhook を登録
-登録したMessage APIを開き
+## Line用 webhook#1 を登録
+- 登録したMessage APIを開き
 https://manager.line.biz/account/@185wdidw/setting/messaging-api
-webhook URLを登録する
+- webhook URLを登録する
 https://close-to-tdtshs-projects.vercel.app/api/line/webhook
-左メニューの応答設定をクリック
-webhookトグルをオンに
+- 左メニューの応答設定をクリック
+- webhookトグルをオンに
 
 ## テスト
-Line公式に対して発言する
-Vercel のLogsで POST /api/line/webhook がstatus 200である事を確認する
-NeonのSQL Editor で発言が記録された事を確認する
+- Line公式に対して発言する
+- Vercel のLogsで POST /api/line/webhook がstatus 200である事を確認する
+- NeonのSQL Editor で発言が記録された事を確認する
 `SELECT * FROM line_events ORDER BY id DESC LIMIT 3;`
+
+
+
