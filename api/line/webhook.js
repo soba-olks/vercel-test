@@ -89,7 +89,8 @@ export default async function handler(req, res) {
           await client.query(
             `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
             VALUES ('line', $1, $2, 'user', $3, $4)
-            ON CONFLICT (line_message_id) DO NOTHING`, [sessionId, userId, text, lineMessageId]
+            ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`,
+            [sessionId, userId, text, lineMessageId]
           );
         }
       }
