@@ -73,4 +73,16 @@ Vercel Dashboard - Project - Settings - Environment Variables
 
 追加したら Redeploy
 
+## Line用 webhook を登録
+登録したMessage APIを開き
+https://manager.line.biz/account/@185wdidw/setting/messaging-api
+webhook URLを登録する
+https://close-to-tdtshs-projects.vercel.app/api/line/webhook
+左メニューの応答設定をクリック
+webhookトグルをオンに
 
+## テスト
+Line公式に対して発言する
+Vercel のLogsで POST /api/line/webhook がstatus 200である事を確認する
+NeonのSQL Editor で発言が記録された事を確認する
+`SELECT * FROM line_events ORDER BY id DESC LIMIT 3;`
