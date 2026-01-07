@@ -9,7 +9,9 @@ export const config = {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }, // Neonで必要になることが多い
+  ssl: {
+    rejectUnauthorized: false
+  }, // Neonで必要になることが多い
 });
 
 function readRawBody(req) {
@@ -32,13 +34,17 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   const channelSecret = process.env.LINE_CHANNEL_SECRET;
-  if (!channelSecret) return res.status(500).json({ error: 'LINE_CHANNEL_SECRET not set' });
+  if (!channelSecret) return res.status(500).json({
+    error: 'LINE_CHANNEL_SECRET not set'
+  });
 
   const rawBody = await readRawBody(req);
   const signature = req.headers['x-line-signature'];
 
   if (!signature || !validateLineSignature(rawBody, signature, channelSecret)) {
-    return res.status(401).json({ error: 'Invalid signature' });
+    return res.status(401).json({
+      error: 'Invalid signature'
+    });
   }
 
   const body = JSON.parse(rawBody);
@@ -57,13 +63,11 @@ export default async function handler(req, res) {
         ev.webhookEventId ||
         `${ev.timestamp || Date.now()}-${ev.source?.userId || 'unknown'}-${ev.type || 'unknown'}`;
 
+      // 1 生イベント保存
       await client.query(
-        `
-        INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
+        `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
         VALUES ($1, $2, $3, $4, $5::jsonb)
-        ON CONFLICT (event_id) DO NOTHING
-        `,
-        [
+        ON CONFLICT (event_id) DO NOTHING`, [
           eventId,
           ev.type || 'unknown',
           ev.source?.userId || null,
@@ -71,17 +75,40 @@ export default async function handler(req, res) {
           JSON.stringify(ev),
         ]
       );
+
+      // 2 messageイベントだけ chat_messages に入れる
+      if (ev.type === 'message' && ev.message?.type === 'text') {
+
+        const userId = ev.source?.userId;
+        const text = ev.message.text;
+        const lineMessageId = ev.message.id;
+        const sessionId = userId; // いまは仮で userId を session_id とする
+
+        if (userId && text) {
+
+          await client.query(
+            `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
+            VALUES ('line', $1, $2, 'user', $3, $4)
+            ON CONFLICT (line_message_id) DO NOTHING`, [sessionId, userId, text, lineMessageId]
+          );
+        }
+      }
+
     }
 
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
     console.error(e);
-    return res.status(500).json({ error: 'DB insert failed' });
+    return res.status(500).json({
+      error: 'DB insert failed'
+    });
   } finally {
     client.release();
   }
 
   // LINEは 200 を返せばOK（返信は後で）
-  return res.status(200).json({ ok: true });
+  return res.status(200).json({
+    ok: true
+  });
 }

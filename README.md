@@ -14,6 +14,7 @@ curl https://close-to-tdtshs-projects.vercel.app/api/health
 
 
 ```
+-- line_events テーブル (ログ)
 CREATE TABLE IF NOT EXISTS line_events (
   id BIGSERIAL PRIMARY KEY,
   event_id TEXT NOT NULL,                -- 重複防止キー（message.id等）
@@ -26,6 +27,27 @@ CREATE TABLE IF NOT EXISTS line_events (
 
 CREATE UNIQUE INDEX IF NOT EXISTS line_events_event_id_uq
 ON line_events(event_id);
+
+
+-- chat_messages テーブル (発言)
+CREATE TABLE IF NOT EXISTS chat_messages (
+  id BIGSERIAL PRIMARY KEY,
+  platform TEXT NOT NULL DEFAULT 'line',
+  session_id TEXT NOT NULL,              -- 今は line userId を仮で入れる（後でDify conversation_idに移行可）
+  user_id TEXT NOT NULL,                 -- LINEのuserId
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  content TEXT NOT NULL,
+  line_message_id TEXT,                  -- message.id（重複防止）
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_line_message_id_uq
+ON chat_messages(line_message_id)
+WHERE line_message_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx
+ON chat_messages(session_id, created_at);
+
 ```
 
 - Tablesに line_events があることを確認
@@ -90,6 +112,5 @@ https://close-to-tdtshs-projects.vercel.app/api/line/webhook
 - Vercel のLogsで POST /api/line/webhook がstatus 200である事を確認する
 - NeonのSQL Editor で発言が記録された事を確認する
 `SELECT * FROM line_events ORDER BY id DESC LIMIT 3;`
-
 
 
