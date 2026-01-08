@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import { Pool } from 'pg';
 
 export const config = {
+  maxDuration: 60,
   api: {
     bodyParser: false, // raw bodyを取る
   },
