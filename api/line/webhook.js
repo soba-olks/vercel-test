@@ -230,11 +230,16 @@ export default async function handler(req, res) {
           }
 
         } catch (e) {
-          // If Transaction B was open, rollback it. 
-          // If B wasn't open yet (error in callDify), this is harmless no-op usually, or check status.
-          // Note: pg client tracks transaction state, so calling ROLLBACK if not in transaction might log warning but is safe.
           await client.query('ROLLBACK');
           console.error('Error during Dify/Response processing:', e);
+
+          if (ev.replyToken) {
+            try {
+              await replyToLine(ev.replyToken, [{ type: 'text', text: `エラーが発生しました: ${e.message}` }]);
+            } catch (replyError) {
+              console.error('Failed to send error reply:', replyError);
+            }
+          }
         }
       }
 
