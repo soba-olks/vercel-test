@@ -53,7 +53,12 @@ async function replyToLine(replyToken, messages) {
 }
 
 // Dify呼び出し関数
-async function callDifyChat({ userId, query, conversationId }) {
+async function callDifyChat({
+  userId,
+  query,
+  conversationId,
+  inputs = {}
+}) {
   const url = `${process.env.DIFY_API_BASE}/chat-messages`;
 
   const res = await fetch(url, {
@@ -63,10 +68,10 @@ async function callDifyChat({ userId, query, conversationId }) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      inputs: {},                 // TODO: 必要なら後で使う
+      inputs,
       query,
       response_mode: 'blocking',
-      user: userId,               // Dify側のuser識別子
+      user: userId,
       conversation_id: conversationId || null,
     }),
   });
@@ -153,8 +158,7 @@ export default async function handler(req, res) {
         await client.query(
           `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
           VALUES ($1, $2, $3, $4, $5::jsonb)
-          ON CONFLICT (event_id) DO NOTHING`,
-          [
+          ON CONFLICT (event_id) DO NOTHING`, [
             eventId,
             ev.type || 'unknown',
             ev.source?.userId || null,
@@ -174,8 +178,7 @@ export default async function handler(req, res) {
             await client.query(
               `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
               VALUES ('line', $1, $2, 'user', $3, $4)
-              ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`,
-              [sessionId, userId, text, lineMessageId]
+              ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`, [sessionId, userId, text, lineMessageId]
             );
             shouldProcessResponse = true;
           }
@@ -197,8 +200,7 @@ export default async function handler(req, res) {
         try {
           // A. Get Dify Conversation ID
           const convRow = await client.query(
-            'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',
-            [userId]
+            'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1', [userId]
           );
           const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
 
@@ -221,16 +223,14 @@ export default async function handler(req, res) {
               `INSERT INTO line_conversations (user_id, dify_conversation_id)
               VALUES ($1, $2)
               ON CONFLICT (user_id)
-              DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`,
-              [userId, newConversationId]
+              DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`, [userId, newConversationId]
             );
           }
 
           // Save Assistant Message
           await client.query(
             `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
-            VALUES ('line', $1, $2, 'assistant', $3, NULL)`,
-            [sessionId, userId, answer]
+            VALUES ('line', $1, $2, 'assistant', $3, NULL)`, [sessionId, userId, answer]
           );
 
           await client.query('COMMIT'); // END Transaction B
@@ -268,7 +268,10 @@ export default async function handler(req, res) {
 
           if (ev.replyToken) {
             try {
-              await replyToLine(ev.replyToken, [{ type: 'text', text: `エラーが発生しました: ${e.message}` }]);
+              await replyToLine(ev.replyToken, [{
+                type: 'text',
+                text: `エラーが発生しました: ${e.message}`
+              }]);
             } catch (replyError) {
               console.error('Failed to send error reply:', replyError);
             }
@@ -304,11 +307,10 @@ export default async function handler(req, res) {
 
             // 1) 既存の要約と境界を取得 (無ければ初期) 
             const s = await client.query(
-              `SELECT summary, to_message_id FROM session_summaries WHERE session_id = $1`,
-              [sessionId]
+              `SELECT summary, to_message_id FROM session_summaries WHERE session_id = $1`, [sessionId]
             );
-            const oldSummary = s.rows[0]?.summary ?? '';
-            const lastToId = s.rows[0]?.to_message_id ?? 0;
+            const oldSummary = s.rows[0]?.summary ? ? '';
+            const lastToId = s.rows[0]?.to_message_id ? ? 0;
 
             // 2) 増分 (差分) 会話を取得
             const delta = await client.query(
@@ -318,22 +320,23 @@ export default async function handler(req, res) {
               WHERE session_id = $1 AND id > $2
               ORDER BY id ASC
               LIMIT 80
-              `,
-              [sessionId, lastToId]
+              `, [sessionId, lastToId]
             );
 
             if (delta.rowCount === 0) {
               // 差分なし：会話IDだけクリアして終了
               await client.query(
-                `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`,
-                [userId]
+                `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`, [userId]
               );
 
               await client.query('COMMIT');
               txStarted = false;
 
               if (ev.replyToken) {
-                await replyToLine(ev.replyToken, [{ type: 'text', text: '保存して終了しました（更新なし）' }]);
+                await replyToLine(ev.replyToken, [{
+                  type: 'text',
+                  text: '保存して終了しました（更新なし）'
+                }]);
               }
               continue;
             }
@@ -367,13 +370,11 @@ export default async function handler(req, res) {
               DO UPDATE SET summary = EXCLUDED.summary,
                             to_message_id = EXCLUDED.to_message_id,
                             updated_at = NOW()
-              `,
-              [sessionId, newSummary, newToId]
+              `, [sessionId, newSummary, newToId]
             );
 
             await client.query(
-              `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`,
-              [userId]
+              `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`, [userId]
             );
 
             await client.query('COMMIT');
@@ -381,40 +382,53 @@ export default async function handler(req, res) {
 
             // 5) LINE返信 (要約本文は長いので送らず、必要なら冒頭だけ) 
             if (ev.replyToken) {
-              await replyToLine(ev.replyToken, [
-                { type: 'text', text: '保存して終了しました（要約を更新しました）' }
-              ]);
+              await replyToLine(ev.replyToken, [{
+                type: 'text',
+                text: '保存して終了しました（要約を更新しました）'
+              }]);
             }
 
           } catch (e) {
             if (txStarted) {
-              try { await client.query('ROLLBACK'); } catch (_) {}
+              try {
+                await client.query('ROLLBACK');
+              } catch (_) {}
             }
             console.error('Error in end_session summarization:', e);
 
             if (ev.replyToken) {
               try {
-                await replyToLine(ev.replyToken, [{ type: 'text', text: `終了処理でエラー: ${e.message}` }]);
+                await replyToLine(ev.replyToken, [{
+                  type: 'text',
+                  text: `終了処理でエラー: ${e.message}`
+                }]);
               } catch (_) {}
             }
           }
 
         } else if (ev.postback?.data === 'action=resume_session') {
           if (ev.replyToken) {
-            await replyToLine(ev.replyToken, [{ type: 'text', text: 'はい。続けてどうぞ。' }]);
+            await replyToLine(ev.replyToken, [{
+              type: 'text',
+              text: 'はい。続けてどうぞ。'
+            }]);
           }
         }
       }
 
     } // end for loop
 
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({
+      ok: true
+    });
 
   } catch (e) {
     console.error('Unexpected error in handler:', e);
     // Even if error, Line webhook usually expects 200 to stop retries.
     // But 500 signals valid server error. Use 500 for unhandled top-level errors.
-    return res.status(500).json({ error: 'Internal Server Error' });
+    return res.status(500).json({
+      error: 'Internal Server Error'
+    });
   } finally {
     client.release();
   }
