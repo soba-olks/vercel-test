@@ -204,11 +204,21 @@ export default async function handler(req, res) {
           );
           const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
 
+          // 前回要約を取得
+          const sumRow = await client.query(
+            'SELECT summary FROM session_summaries WHERE session_id = $1',
+            [sessionId]
+          );
+          const sessionSummary = sumRow.rows[0]?.summary || '';
+
           // B. Call Dify API (No Tx)
           const dify = await callDifyChat({
             userId,
             query: text,
             conversationId: difyConversationId,
+            inputs: {
+              session_summary: sessionSummary,
+            },
           });
 
           const answer = dify.answer || '(no answer)';
