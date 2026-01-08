@@ -142,13 +142,6 @@ export default async function handler(req, res) {
           );
         }
 
-        // FIXME: 固定文返信
-        /*if (ev.replyToken) {
-          await replyToLine(ev.replyToken, [
-            { type: 'text', text: '受け取ったよ！(DB保存OK)' },
-          ]);
-        }*/
-
         // 1) そのユーザーの dify_conversation_id を取得
         const convRow = await client.query(
           'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',

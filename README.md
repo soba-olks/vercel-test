@@ -3,69 +3,11 @@
 curl https://close-to-git-main-tdtshs-projects.vercel.app/api/health
 curl https://close-to-tdtshs-projects.vercel.app/api/health
 
-## API一覧
-
-- 1) Line -> Vercel 上の webhook#1(質問) (/api/line/webhook)
-
-
-## Neon
-
-- Neonの該当プロジェクトのSQL Editorに下記を貼り付けて [Run]をクリック
-
-
-```
--- line_events テーブル (ログ)
-CREATE TABLE IF NOT EXISTS line_events (
-  id BIGSERIAL PRIMARY KEY,
-  event_id TEXT NOT NULL,                -- 重複防止キー（message.id等）
-  event_type TEXT NOT NULL,              -- message / postback など
-  user_id TEXT,                          -- source.userId
-  reply_token TEXT,                      -- 返信する時に使う（今は保存だけ）
-  payload JSONB NOT NULL,                -- 受け取った生データ
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS line_events_event_id_uq
-ON line_events(event_id);
-
-
--- chat_messages テーブル (発言)
-CREATE TABLE IF NOT EXISTS chat_messages (
-  id BIGSERIAL PRIMARY KEY,
-  platform TEXT NOT NULL DEFAULT 'line',
-  session_id TEXT NOT NULL,              -- 今は line userId を仮で入れる（後でDify conversation_idに移行可）
-  user_id TEXT NOT NULL,                 -- LINEのuserId
-  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
-  content TEXT NOT NULL,
-  line_message_id TEXT,                  -- message.id（重複防止）
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-
-CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_line_message_id_uq
-ON chat_messages(line_message_id)
-WHERE line_message_id IS NOT NULL;
-
-CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx
-ON chat_messages(session_id, created_at);
 
 
 
--- line_conversations (LINE userId <-> Dify conversation_id) テーブル
-CREATE TABLE IF NOT EXISTS line_conversations (
-  user_id TEXT PRIMARY KEY,
-  dify_conversation_id TEXT,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
 
-
-```
-
-- Tablesに line_events があることを確認
-
-
-
-## LINE側設定 
+## LINE側設定
 
 ### NFTPlatの認証用 Line Business ID でLINE Official Account Managerにログイン
 > https://manager.line.biz/
@@ -128,6 +70,8 @@ https://cloud.dify.ai/
 - アプリ (sobaxolks)を開く
 https://cloud.dify.ai/app/aedc0b12-1c62-436e-a20f-ee7db3aa8c29/workflow
 
+- Publish（公開）」する
+
 - 左メニュー [APIアクセス]をクリック
 
 > ベースURL: https://api.dify.ai/v1
@@ -178,3 +122,7 @@ SELECT * FROM line_events ORDER BY id DESC LIMIT 3;
 `
 SELECT session_id, user_id, role, content, created_at FROM chat_messages ORDER BY id DESC LIMIT 10;
 `
+
+NeonはPostgresなので、MacOSならPosticoで接続可能
+https://eggerapps.at/postico2/
+
