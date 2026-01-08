@@ -1,5 +1,5 @@
-import crypto from 'crypto';
-import { Pool } from 'pg';
+const crypto = require('crypto');
+const { Pool } = require('pg');
 
 export const config = {
   maxDuration: 60,
@@ -116,7 +116,7 @@ function buildSummaryUpdatePrompt(oldSummary, deltaTranscript) {
   ].join('\n');
 }
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   const channelSecret = process.env.LINE_CHANNEL_SECRET;
@@ -442,4 +442,4 @@ export default async function handler(req, res) {
   } finally {
     client.release();
   }
-}
+};
