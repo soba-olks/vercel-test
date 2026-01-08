@@ -98,140 +98,169 @@ export default async function handler(req, res) {
   const body = JSON.parse(rawBody);
   const events = body.events || [];
 
-  // イベントをまとめて保存（まずは message / postback も全部保存）
   const client = await pool.connect();
+
   try {
-    await client.query('BEGIN');
-
     for (const ev of events) {
-      // 重複防止キー
-      // postback等で message.id が無い場合は webhookEventId があればそれ、無ければ timestamp+userId+type を合成
-      const eventId =
-        ev.message?.id ||
-        ev.webhookEventId ||
-        `${ev.timestamp || Date.now()}-${ev.source?.userId || 'unknown'}-${ev.type || 'unknown'}`;
+      // -----------------------------------------------------------
+      // [STEP 1] RawEvent & User Message Save (Transaction A)
+      // -----------------------------------------------------------
+      let shouldProcessResponse = false;
+      let userId, text, lineMessageId, sessionId;
 
-      // 1 生イベント保存
-      await client.query(
-        `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
-        VALUES ($1, $2, $3, $4, $5::jsonb)
-        ON CONFLICT (event_id) DO NOTHING`, [
-        eventId,
-        ev.type || 'unknown',
-        ev.source?.userId || null,
-        ev.replyToken || null,
-        JSON.stringify(ev),
-      ]
-      );
+      try {
+        await client.query('BEGIN'); // START Transaction A
 
-      if (ev.type === 'message' && ev.message?.type === 'text') {
+        const eventId =
+          ev.message?.id ||
+          ev.webhookEventId ||
+          `${ev.timestamp || Date.now()}-${ev.source?.userId || 'unknown'}-${ev.type || 'unknown'}`;
 
-        const userId = ev.source?.userId;
-        const text = ev.message.text;
-        const lineMessageId = ev.message.id;
-        const sessionId = userId; // FIXME: 仮で userId を session_id とする
-
-        if (userId && text) {
-
-          // 2 messageイベントだけ chat_messages に入れる
-          await client.query(
-            `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
-            VALUES ('line', $1, $2, 'user', $3, $4)
-            ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`,
-            [sessionId, userId, text, lineMessageId]
-          );
-        }
-
-        // 1) そのユーザーの dify_conversation_id を取得
-        const convRow = await client.query(
-          'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',
-          [userId]
-        );
-        const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
-
-        // 2) Difyへ送信
-        const dify = await callDifyChat({
-          userId,
-          query: text,
-          conversationId: difyConversationId,
-        });
-
-        // 3) Difyの返答（多くの場合 dify.answer に入る）
-        const answer = dify.answer || '(no answer)';
-        const newConversationId = dify.conversation_id || difyConversationId;
-
-        // 4) 会話IDを保存（新規ならここで作られる）
-        if (newConversationId && newConversationId !== difyConversationId) {
-          await client.query(
-            `INSERT INTO line_conversations (user_id, dify_conversation_id)
-            VALUES ($1, $2)
-            ON CONFLICT (user_id)
-            DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`,
-            [userId, newConversationId]
-          );
-        }
-
-        // 5) assistant返答を chat_messages に保存
+        // 1. Save Raw Event
         await client.query(
-          `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
-          VALUES ('line', $1, $2, 'assistant', $3, NULL)`,
-          [sessionId, userId, answer]
+          `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
+          VALUES ($1, $2, $3, $4, $5::jsonb)
+          ON CONFLICT (event_id) DO NOTHING`,
+          [
+            eventId,
+            ev.type || 'unknown',
+            ev.source?.userId || null,
+            ev.replyToken || null,
+            JSON.stringify(ev),
+          ]
         );
 
-        // 6) LINEに返信
-        if (ev.replyToken) {
-          await replyToLine(ev.replyToken, [{
-            type: 'text',
-            text: answer,
-            quickReply: {
-              items: [{
-                type: 'action',
-                action: {
-                  type: 'postback',
-                  label: 'これまでの会話を保存して終了する',
-                  data: 'action=end_session',
-                  displayText: '保存して終了する',
-                },
-              }, {
-                type: 'action',
-                action: {
-                  type: 'postback',
-                  label: '質問を続ける',
-                  data: 'action=resume_session',
-                  displayText: '質問を続ける',
-                },
-              }],
-            },
-          }]);
+        // 2. Save User Message (if text)
+        if (ev.type === 'message' && ev.message?.type === 'text') {
+          userId = ev.source?.userId;
+          text = ev.message.text;
+          lineMessageId = ev.message.id;
+          sessionId = userId;
+
+          if (userId && text) {
+            await client.query(
+              `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
+              VALUES ('line', $1, $2, 'user', $3, $4)
+              ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`,
+              [sessionId, userId, text, lineMessageId]
+            );
+            shouldProcessResponse = true;
+          }
         }
 
+        await client.query('COMMIT'); // END Transaction A (User input is definitely saved)
+
+      } catch (e) {
+        await client.query('ROLLBACK');
+        console.error('Error recording input event:', e);
+        // If we failed to save the input, we probably shouldn't reply?
+        continue;
       }
 
+      // -----------------------------------------------------------
+      // [STEP 2] Dify Call & Response (Transaction B)
+      // -----------------------------------------------------------
+      if (shouldProcessResponse && userId && text) {
+        try {
+          // A. Get Dify Conversation ID
+          const convRow = await client.query(
+            'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',
+            [userId]
+          );
+          const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
+
+          // B. Call Dify API (No Tx)
+          const dify = await callDifyChat({
+            userId,
+            query: text,
+            conversationId: difyConversationId,
+          });
+
+          const answer = dify.answer || '(no answer)';
+          const newConversationId = dify.conversation_id || difyConversationId;
+
+          // C. Save Response (Transaction B)
+          await client.query('BEGIN'); // START Transaction B
+
+          // Save Conversation ID
+          if (newConversationId && newConversationId !== difyConversationId) {
+            await client.query(
+              `INSERT INTO line_conversations (user_id, dify_conversation_id)
+              VALUES ($1, $2)
+              ON CONFLICT (user_id)
+              DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`,
+              [userId, newConversationId]
+            );
+          }
+
+          // Save Assistant Message
+          await client.query(
+            `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
+            VALUES ('line', $1, $2, 'assistant', $3, NULL)`,
+            [sessionId, userId, answer]
+          );
+
+          await client.query('COMMIT'); // END Transaction B
+
+          // D. Reply to LINE
+          if (ev.replyToken) {
+            await replyToLine(ev.replyToken, [{
+              type: 'text',
+              text: answer,
+              quickReply: {
+                items: [{
+                  type: 'action',
+                  action: {
+                    type: 'postback',
+                    label: 'これまでの会話を保存して終了する',
+                    data: 'action=end_session',
+                    displayText: '保存して終了する',
+                  },
+                }, {
+                  type: 'action',
+                  action: {
+                    type: 'postback',
+                    label: '質問を続ける',
+                    data: 'action=resume_session',
+                    displayText: '質問を続ける',
+                  },
+                }],
+              },
+            }]);
+          }
+
+        } catch (e) {
+          // If Transaction B was open, rollback it. 
+          // If B wasn't open yet (error in callDify), this is harmless no-op usually, or check status.
+          // Note: pg client tracks transaction state, so calling ROLLBACK if not in transaction might log warning but is safe.
+          await client.query('ROLLBACK');
+          console.error('Error during Dify/Response processing:', e);
+        }
+      }
+
+      // -----------------------------------------------------------
+      // [STEP 3] Handle Postbacks (Optional logic)
+      // -----------------------------------------------------------
       if (ev.type === 'postback') {
         if (ev.postback?.data === 'action=end_session') {
-          // ここに「要約生成 → session_summaries upsert → dify_conversation_idクリア」など
+          // Future logic
         } else if (ev.postback?.data === 'action=resume_session') {
           if (ev.replyToken) {
-            await replyToLine(ev.replyToken, [{ type: 'text', text: '続けて質問をどうぞ' }]);
+            await replyToLine(ev.replyToken, [{ type: 'text', text: 'はい。続けてどうぞ。' }]);
           }
         }
       }
-    }
 
-    await client.query('COMMIT');
+    } // end for loop
+
+    return res.status(200).json({ ok: true });
+
   } catch (e) {
-    await client.query('ROLLBACK');
-    console.error(e);
-    return res.status(500).json({
-      error: 'DB insert failed'
-    });
+    console.error('Unexpected error in handler:', e);
+    // Even if error, Line webhook usually expects 200 to stop retries.
+    // But 500 signals valid server error. Use 500 for unhandled top-level errors.
+    return res.status(500).json({ error: 'Internal Server Error' });
   } finally {
     client.release();
   }
-
-  // LINEは 200 を返せばOK
-  return res.status(200).json({
-    ok: true
-  });
-
 }
