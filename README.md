@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+
 CREATE UNIQUE INDEX IF NOT EXISTS chat_messages_line_message_id_uq
 ON chat_messages(line_message_id)
 WHERE line_message_id IS NOT NULL;
@@ -89,6 +90,18 @@ https://manager.line.biz/account/@185wdidw/setting
 > Channel secret: a3d**************************b10
 
 
+### Channel access token
+
+LINE Developers Consoleを開く
+https://developers.line.biz/console/
+
+左ペインからプロバイダー[SOBA Project]をクリック
+
+[NFT Plat Messaging API]をクリック
+
+チャネルアクセストークン（長期）の[発行]をクリック
+
+> fbc9**************************************lFU=
 
 
 ## Vercelの環境変数を設定
@@ -96,6 +109,7 @@ https://manager.line.biz/account/@185wdidw/setting
 Vercel Dashboard - Project - Settings - Environment Variables
 - DATABASE_URL: (Neonと連携時に自動で入る)
 - LINE_CHANNEL_SECRET: a3d**************************b10
+- LINE_CHANNEL_ACCESS_TOKEN: fbc9**************************************lFU=
 
 追加したら Redeploy
 
@@ -111,6 +125,11 @@ https://close-to-tdtshs-projects.vercel.app/api/line/webhook
 - Line公式に対して発言する
 - Vercel のLogsで POST /api/line/webhook がstatus 200である事を確認する
 - NeonのSQL Editor で発言が記録された事を確認する
-`SELECT * FROM line_events ORDER BY id DESC LIMIT 3;`
 
+`
+SELECT * FROM line_events ORDER BY id DESC LIMIT 3;
+`
 
+`
+SELECT session_id, user_id, role, content, created_at FROM chat_messages ORDER BY id DESC LIMIT 10;
+`

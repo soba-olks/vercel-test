@@ -30,6 +30,25 @@ function validateLineSignature(rawBody, signature, channelSecret) {
   return digest === signature;
 }
 
+async function replyToLine(replyToken, messages) {
+  const res = await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`LINE reply failed: ${res.status} ${text}`);
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
@@ -76,7 +95,6 @@ export default async function handler(req, res) {
         ]
       );
 
-      // 2 messageイベントだけ chat_messages に入れる
       if (ev.type === 'message' && ev.message?.type === 'text') {
 
         const userId = ev.source?.userId;
@@ -86,6 +104,7 @@ export default async function handler(req, res) {
 
         if (userId && text) {
 
+          // 2 messageイベントだけ chat_messages に入れる
           await client.query(
             `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
             VALUES ('line', $1, $2, 'user', $3, $4)
@@ -93,8 +112,15 @@ export default async function handler(req, res) {
             [sessionId, userId, text, lineMessageId]
           );
         }
-      }
 
+        // 固定文返信（まずはこれで疎通完成）
+        if (ev.replyToken) {
+          await replyToLine(ev.replyToken, [
+            { type: 'text', text: '受け取ったよ！(DB保存OK)' },
+          ]);
+        }
+
+      }
     }
 
     await client.query('COMMIT');
