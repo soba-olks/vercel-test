@@ -49,13 +49,23 @@ WHERE line_message_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS chat_messages_session_id_idx
 ON chat_messages(session_id, created_at);
 
+
+
+-- line_conversations (LINE userId <-> Dify conversation_id) テーブル
+CREATE TABLE IF NOT EXISTS line_conversations (
+  user_id TEXT PRIMARY KEY,
+  dify_conversation_id TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
 ```
 
 - Tablesに line_events があることを確認
 
 
 
-## LINE Developers の Channel secret 取得
+## LINE側設定 
 
 ### NFTPlatの認証用 Line Business ID でLINE Official Account Managerにログイン
 > https://manager.line.biz/
@@ -90,36 +100,71 @@ https://manager.line.biz/account/@185wdidw/setting
 > Channel secret: a3d**************************b10
 
 
-### Channel access token
+### 自動応答メッセージのDisable
 
-LINE Developers Consoleを開く
+- LINE Official Account Manager を開く
+- 自動応答 - 応答メッセージを開く
+https://manager.line.biz/account/@185wdidw/autoresponse
+- default の応答メッセージがオンになっていたら、オフにする
+
+### LINE Developers Console の Channel access token
+
+- LINE Developers Consoleを開く
 https://developers.line.biz/console/
 
-左ペインからプロバイダー[SOBA Project]をクリック
+- 左ペインからプロバイダー[SOBA Project]をクリック
 
-[NFT Plat Messaging API]をクリック
+- [NFT Plat Messaging API]をクリック
 
-チャネルアクセストークン（長期）の[発行]をクリック
+- チャネルアクセストークン（長期）の[発行]をクリック
 
 > fbc9**************************************lFU=
 
 
-## Vercelの環境変数を設定
+## Dify
+- Difyにログイン
+https://cloud.dify.ai/
+
+- アプリ (sobaxolks)を開く
+https://cloud.dify.ai/app/aedc0b12-1c62-436e-a20f-ee7db3aa8c29/workflow
+
+- 左メニュー [APIアクセス]をクリック
+
+> ベースURL: https://api.dify.ai/v1
+
+- 右上[APIキー]をクリック
+
+- APIシークレットキーダイアログで[+新しいシークレットキーを作成]をクリック
+
+> APIシークレットキー: app-xw1******************XTD
+
+
+
+## Vercel
+
+### Vercelの環境変数を設定
 
 Vercel Dashboard - Project - Settings - Environment Variables
-- DATABASE_URL: (Neonと連携時に自動で入る)
-- LINE_CHANNEL_SECRET: a3d**************************b10
-- LINE_CHANNEL_ACCESS_TOKEN: fbc9**************************************lFU=
+
+> DATABASE_URL: (Neonと連携時に自動で入る)
+> LINE_CHANNEL_SECRET: a3d**************************b10
+> LINE_CHANNEL_ACCESS_TOKEN: fbc9**************************************lFU=
+> DIFY_API_BASE: https://api.dify.ai/v1
+> DIFY_API_KEY: app-xw1******************XTD
 
 追加したら Redeploy
 
-## Line用 webhook#1 を登録
+
+## Line webhooks
+
+### webhook#1(発言) を登録
 - 登録したMessage APIを開き
 https://manager.line.biz/account/@185wdidw/setting/messaging-api
 - webhook URLを登録する
 https://close-to-tdtshs-projects.vercel.app/api/line/webhook
 - 左メニューの応答設定をクリック
 - webhookトグルをオンに
+
 
 ## テスト
 - Line公式に対して発言する

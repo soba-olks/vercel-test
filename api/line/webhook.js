@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 
 export const config = {
   api: {
-    bodyParser: false, // ★これが超重要：raw bodyを取るため
+    bodyParser: false, // raw bodyを取る
   },
 };
 
@@ -11,7 +11,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
-  }, // Neonで必要になることが多い
+  }, 
 });
 
 function readRawBody(req) {
@@ -23,6 +23,7 @@ function readRawBody(req) {
   });
 }
 
+// Line署名確認
 function validateLineSignature(rawBody, signature, channelSecret) {
   const hmac = crypto.createHmac('sha256', channelSecret);
   hmac.update(rawBody);
@@ -30,6 +31,7 @@ function validateLineSignature(rawBody, signature, channelSecret) {
   return digest === signature;
 }
 
+// Line応答関数
 async function replyToLine(replyToken, messages) {
   const res = await fetch('https://api.line.me/v2/bot/message/reply', {
     method: 'POST',
@@ -47,6 +49,33 @@ async function replyToLine(replyToken, messages) {
     const text = await res.text();
     throw new Error(`LINE reply failed: ${res.status} ${text}`);
   }
+}
+
+// Dify呼び出し関数
+async function callDifyChat({ userId, query, conversationId }) {
+  const url = `${process.env.DIFY_API_BASE}/chat-messages`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.DIFY_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      inputs: {},                 // TODO: 必要なら後で使う
+      query,
+      response_mode: 'blocking',
+      user: userId,               // Dify側のuser識別子
+      conversation_id: conversationId || null,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Dify error: ${res.status} ${text}`);
+  }
+
+  return await res.json();
 }
 
 export default async function handler(req, res) {
@@ -75,7 +104,7 @@ export default async function handler(req, res) {
     await client.query('BEGIN');
 
     for (const ev of events) {
-      // 重複防止キー（message.id が一番扱いやすい）
+      // 重複防止キー
       // postback等で message.id が無い場合は webhookEventId があればそれ、無ければ timestamp+userId+type を合成
       const eventId =
         ev.message?.id ||
@@ -100,7 +129,7 @@ export default async function handler(req, res) {
         const userId = ev.source?.userId;
         const text = ev.message.text;
         const lineMessageId = ev.message.id;
-        const sessionId = userId; // いまは仮で userId を session_id とする
+        const sessionId = userId; // FIXME: 仮で userId を session_id とする
 
         if (userId && text) {
 
@@ -113,11 +142,52 @@ export default async function handler(req, res) {
           );
         }
 
-        // 固定文返信（まずはこれで疎通完成）
-        if (ev.replyToken) {
+        // FIXME: 固定文返信
+        /*if (ev.replyToken) {
           await replyToLine(ev.replyToken, [
             { type: 'text', text: '受け取ったよ！(DB保存OK)' },
           ]);
+        }*/
+
+        // 1) そのユーザーの dify_conversation_id を取得
+        const convRow = await client.query(
+          'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',
+          [userId]
+        );
+        const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
+
+        // 2) Difyへ送信
+        const dify = await callDifyChat({
+          userId,
+          query: text,
+          conversationId: difyConversationId,
+        });
+
+        // 3) Difyの返答（多くの場合 dify.answer に入る）
+        const answer = dify.answer || '(no answer)';
+        const newConversationId = dify.conversation_id || difyConversationId;
+
+        // 4) 会話IDを保存（新規ならここで作られる）
+        if (newConversationId && newConversationId !== difyConversationId) {
+          await client.query(
+            `INSERT INTO line_conversations (user_id, dify_conversation_id)
+            VALUES ($1, $2)
+            ON CONFLICT (user_id)
+            DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`,
+            [userId, newConversationId]
+          );
+        }
+
+        // 5) assistant返答を chat_messages に保存
+        await client.query(
+          `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
+          VALUES ('line', $1, $2, 'assistant', $3, NULL)`,
+          [sessionId, userId, answer]
+        );
+
+        // 6) LINEに返信
+        if (ev.replyToken) {
+          await replyToLine(ev.replyToken, [{ type: 'text', text: answer }]);
         }
 
       }
@@ -134,8 +204,9 @@ export default async function handler(req, res) {
     client.release();
   }
 
-  // LINEは 200 を返せばOK（返信は後で）
+  // LINEは 200 を返せばOK
   return res.status(200).json({
     ok: true
   });
+
 }
