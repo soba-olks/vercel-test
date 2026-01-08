@@ -1,13 +1,6 @@
 const crypto = require('crypto');
 const { Pool } = require('pg');
 
-export const config = {
-  maxDuration: 60,
-  api: {
-    bodyParser: false, // raw bodyを取る
-  },
-};
-
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
@@ -319,8 +312,8 @@ module.exports = async function handler(req, res) {
             const s = await client.query(
               `SELECT summary, to_message_id FROM session_summaries WHERE session_id = $1`, [sessionId]
             );
-            const oldSummary = s.rows[0]?.summary ? ? '';
-            const lastToId = s.rows[0]?.to_message_id ? ? 0;
+            const oldSummary = s.rows[0]?.summary ?? '';
+            const lastToId = s.rows[0]?.to_message_id ?? 0;
 
             // 2) 増分 (差分) 会話を取得
             const delta = await client.query(
