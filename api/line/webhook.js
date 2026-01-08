@@ -11,7 +11,7 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
-  }, 
+  },
 });
 
 function readRawBody(req) {
@@ -116,12 +116,12 @@ export default async function handler(req, res) {
         `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
         VALUES ($1, $2, $3, $4, $5::jsonb)
         ON CONFLICT (event_id) DO NOTHING`, [
-          eventId,
-          ev.type || 'unknown',
-          ev.source?.userId || null,
-          ev.replyToken || null,
-          JSON.stringify(ev),
-        ]
+        eventId,
+        ev.type || 'unknown',
+        ev.source?.userId || null,
+        ev.replyToken || null,
+        JSON.stringify(ev),
+      ]
       );
 
       if (ev.type === 'message' && ev.message?.type === 'text') {
@@ -180,7 +180,21 @@ export default async function handler(req, res) {
 
         // 6) LINEに返信
         if (ev.replyToken) {
-          await replyToLine(ev.replyToken, [{ type: 'text', text: answer }]);
+          await replyToLine(ev.replyToken, [{
+            type: 'text',
+            text: answer,
+            quickReply: {
+              items: [{
+                type: 'action',
+                action: {
+                  type: 'postback',
+                  label: 'セッションを終了して保存する',
+                  data: 'action=end_session',
+                  displayText: '終了して保存する',
+                },
+              }],
+            },
+          }]);
         }
 
       }
