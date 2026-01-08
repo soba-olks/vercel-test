@@ -188,15 +188,33 @@ export default async function handler(req, res) {
                 type: 'action',
                 action: {
                   type: 'postback',
-                  label: 'セッションを終了して保存する',
+                  label: 'これまでの会話を保存して終了する',
                   data: 'action=end_session',
-                  displayText: '終了して保存する',
+                  displayText: '保存して終了する',
+                },
+              }, {
+                type: 'action',
+                action: {
+                  type: 'postback',
+                  label: '質問を続ける',
+                  data: 'action=resume_session',
+                  displayText: '質問を続ける',
                 },
               }],
             },
           }]);
         }
 
+      }
+
+      if (ev.type === 'postback') {
+        if (ev.postback?.data === 'action=end_session') {
+          // ここに「要約生成 → session_summaries upsert → dify_conversation_idクリア」など
+        } else if (ev.postback?.data === 'action=resume_session') {
+          if (ev.replyToken) {
+            await replyToLine(ev.replyToken, [{ type: 'text', text: '続けて質問をどうぞ' }]);
+          }
+        }
       }
     }
 
