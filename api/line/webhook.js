@@ -4,7 +4,7 @@ const { Pool } = require('pg');
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: {
-    rejectUnauthorized: false
+    rejectUnauthorized: false,
   },
 });
 
@@ -46,12 +46,7 @@ async function replyToLine(replyToken, messages) {
 }
 
 // Dify呼び出し関数
-async function callDifyChat({
-  userId,
-  query,
-  conversationId,
-  inputs = {}
-}) {
+async function callDifyChat({ userId, query, conversationId, inputs = {} }) {
   const url = `${process.env.DIFY_API_BASE}/chat-messages`;
 
   const res = await fetch(url, {
@@ -80,7 +75,7 @@ async function callDifyChat({
 // 増分作成
 function buildDeltaTranscript(rows) {
   return rows
-    .map(r => `${r.role === 'user' ? 'User' : 'Assistant'}: ${r.content}`)
+    .map((r) => `${r.role === 'user' ? 'User' : 'Assistant'}: ${r.content}`)
     .join('\n');
 }
 
@@ -105,7 +100,7 @@ function buildSummaryUpdatePrompt(oldSummary, deltaTranscript) {
     oldSummary && oldSummary.trim() ? oldSummary : '(empty)',
     '',
     '=== delta_transcript ===',
-    deltaTranscript
+    deltaTranscript,
   ].join('\n');
 }
 
@@ -113,16 +108,17 @@ module.exports = async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
 
   const channelSecret = process.env.LINE_CHANNEL_SECRET;
-  if (!channelSecret) return res.status(500).json({
-    error: 'LINE_CHANNEL_SECRET not set'
-  });
+  if (!channelSecret)
+    return res.status(500).json({
+      error: 'LINE_CHANNEL_SECRET not set',
+    });
 
   const rawBody = await readRawBody(req);
   const signature = req.headers['x-line-signature'];
 
   if (!signature || !validateLineSignature(rawBody, signature, channelSecret)) {
     return res.status(401).json({
-      error: 'Invalid signature'
+      error: 'Invalid signature',
     });
   }
 
@@ -151,7 +147,8 @@ module.exports = async function handler(req, res) {
         await client.query(
           `INSERT INTO line_events (event_id, event_type, user_id, reply_token, payload)
           VALUES ($1, $2, $3, $4, $5::jsonb)
-          ON CONFLICT (event_id) DO NOTHING`, [
+          ON CONFLICT (event_id) DO NOTHING`,
+          [
             eventId,
             ev.type || 'unknown',
             ev.source?.userId || null,
@@ -171,14 +168,14 @@ module.exports = async function handler(req, res) {
             await client.query(
               `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
               VALUES ('line', $1, $2, 'user', $3, $4)
-              ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`, [sessionId, userId, text, lineMessageId]
+              ON CONFLICT ON CONSTRAINT chat_messages_line_message_id_uq DO NOTHING`,
+              [sessionId, userId, text, lineMessageId]
             );
             shouldProcessResponse = true;
           }
         }
 
         await client.query('COMMIT'); // END Transaction A (User input is definitely saved)
-
       } catch (e) {
         await client.query('ROLLBACK');
         console.error('Error recording input event:', e);
@@ -193,9 +190,11 @@ module.exports = async function handler(req, res) {
         try {
           // A. Get Dify Conversation ID
           const convRow = await client.query(
-            'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1', [userId]
+            'SELECT dify_conversation_id FROM line_conversations WHERE user_id = $1',
+            [userId]
           );
-          const difyConversationId = convRow.rows[0]?.dify_conversation_id || null;
+          const difyConversationId =
+            convRow.rows[0]?.dify_conversation_id || null;
 
           // 前回要約を取得
           const sumRow = await client.query(
@@ -226,55 +225,63 @@ module.exports = async function handler(req, res) {
               `INSERT INTO line_conversations (user_id, dify_conversation_id)
               VALUES ($1, $2)
               ON CONFLICT (user_id)
-              DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`, [userId, newConversationId]
+              DO UPDATE SET dify_conversation_id = EXCLUDED.dify_conversation_id, updated_at = NOW()`,
+              [userId, newConversationId]
             );
           }
 
           // Save Assistant Message
           await client.query(
             `INSERT INTO chat_messages (platform, session_id, user_id, role, content, line_message_id)
-            VALUES ('line', $1, $2, 'assistant', $3, NULL)`, [sessionId, userId, answer]
+            VALUES ('line', $1, $2, 'assistant', $3, NULL)`,
+            [sessionId, userId, answer]
           );
 
           await client.query('COMMIT'); // END Transaction B
 
           // D. Reply to LINE
           if (ev.replyToken) {
-            await replyToLine(ev.replyToken, [{
-              type: 'text',
-              text: answer,
-              quickReply: {
-                items: [{
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: 'これまでの会話を保存して終了する',
-                    data: 'action=end_session',
-                    displayText: '保存して終了する',
-                  },
-                }, {
-                  type: 'action',
-                  action: {
-                    type: 'postback',
-                    label: '質問を続ける',
-                    data: 'action=resume_session',
-                    displayText: '質問を続ける',
-                  },
-                }],
+            await replyToLine(ev.replyToken, [
+              {
+                type: 'text',
+                text: answer,
+                quickReply: {
+                  items: [
+                    {
+                      type: 'action',
+                      action: {
+                        type: 'postback',
+                        label: 'これまでの会話を保存して終了する',
+                        data: 'action=end_session',
+                        displayText: '保存して終了する',
+                      },
+                    },
+                    {
+                      type: 'action',
+                      action: {
+                        type: 'postback',
+                        label: '質問を続ける',
+                        data: 'action=resume_session',
+                        displayText: '質問を続ける',
+                      },
+                    },
+                  ],
+                },
               },
-            }]);
+            ]);
           }
-
         } catch (e) {
           await client.query('ROLLBACK');
           console.error('Error during Dify/Response processing:', e);
 
           if (ev.replyToken) {
             try {
-              await replyToLine(ev.replyToken, [{
-                type: 'text',
-                text: `エラーが発生しました: ${e.message}`
-              }]);
+              await replyToLine(ev.replyToken, [
+                {
+                  type: 'text',
+                  text: `エラーが発生しました: ${e.message}`,
+                },
+              ]);
             } catch (replyError) {
               console.error('Failed to send error reply:', replyError);
             }
@@ -308,9 +315,10 @@ module.exports = async function handler(req, res) {
             await client.query('BEGIN');
             txStarted = true;
 
-            // 1) 既存の要約と境界を取得 (無ければ初期) 
+            // 1) 既存の要約と境界を取得 (無ければ初期)
             const s = await client.query(
-              `SELECT summary, to_message_id FROM session_summaries WHERE session_id = $1`, [sessionId]
+              `SELECT summary, to_message_id FROM session_summaries WHERE session_id = $1`,
+              [sessionId]
             );
             const oldSummary = s.rows[0]?.summary ?? '';
             const lastToId = s.rows[0]?.to_message_id ?? 0;
@@ -323,23 +331,27 @@ module.exports = async function handler(req, res) {
               WHERE session_id = $1 AND id > $2
               ORDER BY id ASC
               LIMIT 80
-              `, [sessionId, lastToId]
+              `,
+              [sessionId, lastToId]
             );
 
             if (delta.rowCount === 0) {
               // 差分なし：会話IDだけクリアして終了
               await client.query(
-                `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`, [userId]
+                `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`,
+                [userId]
               );
 
               await client.query('COMMIT');
               txStarted = false;
 
               if (ev.replyToken) {
-                await replyToLine(ev.replyToken, [{
-                  type: 'text',
-                  text: '保存して終了しました（更新なし）'
-                }]);
+                await replyToLine(ev.replyToken, [
+                  {
+                    type: 'text',
+                    text: '保存して終了しました（更新なし）',
+                  },
+                ]);
               }
               continue;
             }
@@ -351,7 +363,10 @@ module.exports = async function handler(req, res) {
             txStarted = false;
 
             // 3) 要約更新は外部API呼び出しなので「トランザクション外」で実行
-            const prompt = buildSummaryUpdatePrompt(oldSummary, deltaTranscript);
+            const prompt = buildSummaryUpdatePrompt(
+              oldSummary,
+              deltaTranscript
+            );
 
             const difySum = await callDifyChat({
               userId,
@@ -373,24 +388,27 @@ module.exports = async function handler(req, res) {
               DO UPDATE SET summary = EXCLUDED.summary,
                             to_message_id = EXCLUDED.to_message_id,
                             updated_at = NOW()
-              `, [sessionId, newSummary, newToId]
+              `,
+              [sessionId, newSummary, newToId]
             );
 
             await client.query(
-              `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`, [userId]
+              `UPDATE line_conversations SET dify_conversation_id = NULL, updated_at = NOW() WHERE user_id = $1`,
+              [userId]
             );
 
             await client.query('COMMIT');
             txStarted = false;
 
-            // 5) LINE返信 (要約本文は長いので送らず、必要なら冒頭だけ) 
+            // 5) LINE返信 (要約本文は長いので送らず、必要なら冒頭だけ)
             if (ev.replyToken) {
-              await replyToLine(ev.replyToken, [{
-                type: 'text',
-                text: '保存して終了しました（要約を更新しました）'
-              }]);
+              await replyToLine(ev.replyToken, [
+                {
+                  type: 'text',
+                  text: '保存して終了しました（要約を更新しました）',
+                },
+              ]);
             }
-
           } catch (e) {
             if (txStarted) {
               try {
@@ -401,36 +419,37 @@ module.exports = async function handler(req, res) {
 
             if (ev.replyToken) {
               try {
-                await replyToLine(ev.replyToken, [{
-                  type: 'text',
-                  text: `終了処理でエラー: ${e.message}`
-                }]);
+                await replyToLine(ev.replyToken, [
+                  {
+                    type: 'text',
+                    text: `終了処理でエラー: ${e.message}`,
+                  },
+                ]);
               } catch (_) {}
             }
           }
-
         } else if (ev.postback?.data === 'action=resume_session') {
           if (ev.replyToken) {
-            await replyToLine(ev.replyToken, [{
-              type: 'text',
-              text: 'はい。続けてどうぞ。'
-            }]);
+            await replyToLine(ev.replyToken, [
+              {
+                type: 'text',
+                text: 'はい。続けてどうぞ。',
+              },
+            ]);
           }
         }
       }
-
     } // end for loop
 
     return res.status(200).json({
-      ok: true
+      ok: true,
     });
-
   } catch (e) {
     console.error('Unexpected error in handler:', e);
     // Even if error, Line webhook usually expects 200 to stop retries.
     // But 500 signals valid server error. Use 500 for unhandled top-level errors.
     return res.status(500).json({
-      error: 'Internal Server Error'
+      error: 'Internal Server Error',
     });
   } finally {
     client.release();
