@@ -134,9 +134,11 @@ module.exports = async function handler(req, res) {
       // -----------------------------------------------------------
       let shouldProcessResponse = false;
       let userId, text, lineMessageId, sessionId;
+      let txStarted = false;
 
       try {
         await client.query('BEGIN'); // START Transaction A
+        txStarted = true;
 
         const eventId =
           ev.message?.id ||
@@ -176,8 +178,13 @@ module.exports = async function handler(req, res) {
         }
 
         await client.query('COMMIT'); // END Transaction A (User input is definitely saved)
+        txStarted = false;
       } catch (e) {
-        await client.query('ROLLBACK');
+        if (txStarted) {
+          try {
+            await client.query('ROLLBACK');
+          } catch (_) { }
+        }
         console.error('Error recording input event:', e);
         // If we failed to save the input, we probably shouldn't reply?
         continue;
@@ -218,6 +225,7 @@ module.exports = async function handler(req, res) {
 
           // C. Save Response (Transaction B)
           await client.query('BEGIN'); // START Transaction B
+          txStarted = true;
 
           // Save Conversation ID
           if (newConversationId && newConversationId !== difyConversationId) {
@@ -238,6 +246,7 @@ module.exports = async function handler(req, res) {
           );
 
           await client.query('COMMIT'); // END Transaction B
+          txStarted = false;
 
           // D. Reply to LINE
           if (ev.replyToken) {
@@ -271,7 +280,11 @@ module.exports = async function handler(req, res) {
             ]);
           }
         } catch (e) {
-          await client.query('ROLLBACK');
+          if (txStarted) {
+            try {
+              await client.query('ROLLBACK');
+            } catch (_) { }
+          }
           console.error('Error during Dify/Response processing:', e);
 
           if (ev.replyToken) {
@@ -413,7 +426,7 @@ module.exports = async function handler(req, res) {
             if (txStarted) {
               try {
                 await client.query('ROLLBACK');
-              } catch (_) {}
+              } catch (_) { }
             }
             console.error('Error in end_session summarization:', e);
 
@@ -425,7 +438,7 @@ module.exports = async function handler(req, res) {
                     text: `終了処理でエラー: ${e.message}`,
                   },
                 ]);
-              } catch (_) {}
+              } catch (_) { }
             }
           }
         } else if (ev.postback?.data === 'action=resume_session') {
